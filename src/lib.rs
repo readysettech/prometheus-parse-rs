@@ -74,6 +74,7 @@ impl<'a> LineInfo<'a> {
             }
             None => {}
         }
+
         match TYPE_RE.captures(line) {
             Some(ref caps) => {
                 return match (caps.get(1), caps.get(2)) {
@@ -84,11 +85,11 @@ impl<'a> LineInfo<'a> {
                                 SampleType::Histogram => format!("{}_bucket", metric_name.as_str()),
                                 _ => metric_name.as_str().to_string(),
                             },
-                            sample_type: sample_type,
+                            sample_type,
                         }
                     }
                     _ => LineInfo::Ignored,
-                }
+                };
             }
             None => {}
         }
@@ -107,7 +108,7 @@ impl<'a> LineInfo<'a> {
                         timestamp: timestamp.map_or(None, |c| Some(c.as_str())),
                     },
                     _ => LineInfo::Ignored,
-                }
+                };
             }
             None => LineInfo::Ignored,
         }
@@ -122,21 +123,18 @@ pub struct Sample {
     pub timestamp: DateTime<Utc>,
 }
 
-fn parse_bucket(s: &str, label: &str) -> Option<f64> {
-    if let Some(kv) = s.split(",").next() {
-        let kvpair = kv.split("=").collect::<Vec<_>>();
-        let (k, v) = (kvpair[0], kvpair[1].trim_matches('"'));
+fn parse_tag(tags: &str, label: &str) -> Option<f64> {
+    let tags = tags.split(",");
+    for kv in tags {
+        let (k, v) = kv.split_once("=").unwrap();
         if k == label {
-            match parse_golang_float(v) {
+            return match parse_golang_float(v.trim_matches('\"')) {
                 Ok(v) => Some(v),
                 Err(_) => None,
-            }
-        } else {
-            None
+            };
         }
-    } else {
-        None
     }
+    None
 }
 
 #[derive(Debug, PartialEq)]
@@ -180,7 +178,9 @@ impl Labels {
 impl Deref for Labels {
     type Target = HashMap<String, String>;
 
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -272,13 +272,13 @@ impl Scrape {
                     };
                     match (types.get(metric_name), labels) {
                         (Some(SampleType::Histogram), Some(labels)) => {
-                            if let Some(lt) = parse_bucket(labels, "le") {
+                            if let Some(lt) = parse_tag(labels, "le") {
                                 let sample =
                                     buckets.entry(metric_name.to_string()).or_insert(Sample {
                                         metric: metric_name.to_string(),
-                                        labels: Labels::new(),
+                                        labels: Labels::parse(labels),
                                         value: Value::Histogram(vec![]),
-                                        timestamp: timestamp,
+                                        timestamp,
                                     });
                                 sample.value.push_histogram(HistogramCount {
                                     less_than: lt,
@@ -287,13 +287,13 @@ impl Scrape {
                             }
                         }
                         (Some(SampleType::Summary), Some(labels)) => {
-                            if let Some(q) = parse_bucket(labels, "quantile") {
+                            if let Some(q) = parse_tag(labels, "quantile") {
                                 let sample =
                                     buckets.entry(metric_name.to_string()).or_insert(Sample {
                                         metric: metric_name.to_string(),
-                                        labels: Labels::new(),
+                                        labels: Labels::parse(labels),
                                         value: Value::Summary(vec![]),
-                                        timestamp: timestamp,
+                                        timestamp,
                                     });
                                 sample.value.push_summary(SummaryCount {
                                     quantile: q,
@@ -532,4 +532,3 @@ rpc_duration_seconds_count 2693
         );
     }
 }
-
