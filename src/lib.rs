@@ -1,4 +1,5 @@
 use chrono::{DateTime, TimeZone, Utc};
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use regex::Regex;
 
@@ -170,8 +171,30 @@ impl Labels {
         }
         Labels(l)
     }
+
+    fn parse_without_tag(s: &str, ignore: &str) -> Labels {
+        let mut l = HashMap::new();
+        for kv in s.split(',') {
+            let (k, v) = kv.split_once("=").unwrap();
+            if k != ignore {
+                l.insert(k.to_string(), v.trim_matches('"').to_string());
+            }
+        }
+        Labels(l)
+    }
+
     pub fn get(&self, name: &str) -> Option<&str> {
         self.0.get(name).map(|ref x| x.as_str())
+    }
+}
+
+impl ToString for Labels {
+    fn to_string(&self) -> String {
+        let mut s = String::new();
+        for (k, v) in self.iter().sorted() {
+            s += &format!("{}={},", k, v);
+        }
+        s
     }
 }
 
@@ -288,13 +311,14 @@ impl Scrape {
                         }
                         (Some(SampleType::Summary), Some(labels)) => {
                             if let Some(q) = parse_tag(labels, "quantile") {
-                                let sample =
-                                    buckets.entry(metric_name.to_string()).or_insert(Sample {
-                                        metric: metric_name.to_string(),
-                                        labels: Labels::parse(labels),
-                                        value: Value::Summary(vec![]),
-                                        timestamp,
-                                    });
+                                let labels = Labels::parse_without_tag(labels, "quantile");
+                                let bucket_key = metric_name.to_string() + &labels.to_string();
+                                let sample = buckets.entry(bucket_key).or_insert(Sample {
+                                    metric: metric_name.to_string(),
+                                    labels,
+                                    value: Value::Summary(vec![]),
+                                    timestamp,
+                                });
                                 sample.value.push_summary(SummaryCount {
                                     quantile: q,
                                     count: fvalue,
